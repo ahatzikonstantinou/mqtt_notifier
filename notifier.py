@@ -6,71 +6,88 @@ import sys
 import json #to generate payloads for mqtt publishing
 import os.path # to check if configuration file exists
 
+from gsm import *
+from wired_internet import *
 
-#from https://www.connectedcities.com.ph/blogs/tutorial/sim800l-and-raspberry-pi-3-b-controlled-3-led-tutorial
-import RPi.GPIO as GPIO
-import serial
-import time, sys
-import datetime
+class MqttParams( object ):
+    """ Holds the mqtt connection params
+    """
+    def __init__( self, address, port, subscribeTopic, publishTopic ):
+        self.address = address
+        self.port = port
+        self.subscribeTopic = subscribeTopic
+        self.publishTopic = publishTopic
 
-def setup():
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setwarnings(False)
+class Notifier( object ):
+    """ This class handles notifications such as phonecalls, sms, email and IM
+    """
+    def __init__( self, mqttId, mqttParams, mailParams, imParams ):        
+        self.mqttParams = mqttParams
+        self.mqttId = mqttId
+        self.gsm = GSM( mailParams, imParams )
+        self.wi = WiredInternet( mailParams, imParams )
 
-SERIAL_PORT = "/dev/ttyS0"    # Rasp 3 UART Port
+        signal.signal( signal.SIGINT, self.__signalHandler )
 
-ser = serial.Serial(SERIAL_PORT, baudrate = 115200, timeout = 5)
-setup()
-ser.write("AT+CMGF=1\r") # set to text mode
-time.sleep(1)
-ser.write('AT+CMGDA="DEL ALL"\r') # delete all SMS
-time.sleep(1)
-reply = ser.read(ser.inWaiting()) # Clean buf
-print "Listening for incomming SMS..."
-while True:
-    reply = ser.read(ser.inWaiting())
-    if reply != "":
-        ser.write("AT+CMGR=1\r") 
-        time.sleep(1)
-        reply = ser.read(ser.inWaiting())
-        print "SMS received. Content:"
-        print reply
- 	if "ON" in reply.upper():
-	    if "LED1" in reply.upper():
-                print "LED 1 ON"
-                GPIO.output(23,GPIO.HIGH)
-	    if "LED2" in reply.upper():
-                print "LED 2 ON"
-                GPIO.output(24,GPIO.HIGH)
-            if "LED3" in reply.upper():
-                print "LED 3 ON"
-                GPIO.output(25,GPIO.HIGH)
-            if "ALL" in reply.upper():
-		print ("ALL LED ON")
-                GPIO.output(23,GPIO.HIGH)
-                GPIO.output(24,GPIO.HIGH)
-                GPIO.output(25,GPIO.HIGH)
-	if "OFF" in reply.upper():
-	    if "LED1" in reply.upper():
-                print "LED 1 OFF"
-                GPIO.output(23,GPIO.LOW)
-	    if "LED2" in reply.upper():
-                print "LED 2 OFF"
-                GPIO.output(24,GPIO.LOW)
-            if "LED3" in reply.upper():
-                print "LED 3 OFF"
-                GPIO.output(25,GPIO.LOW)
-            if "ALL" in reply.upper():
-                print "ALL LED OFF"
-                GPIO.output(23,GPIO.LOW)
-                GPIO.output(24,GPIO.LOW)
-                GPIO.output(25,GPIO.LOW)
-        time.sleep(.500)
-        ser.write('AT+CMGDA="DEL ALL"\r') # delete all
-        time.sleep(.500)
-        ser.read(ser.inWaiting()) # Clear buffer
-        time.sleep(.500)  
+    def run( self ):
+        #create a mqtt client
+        self.client = mqtt.Client( self.mqttId )
+        self.client.on_connect = self.__on_connect
+        self.client.on_message = self.__on_message
+        #set last will and testament before connecting
+        self.client.will_set( self.mqttParams.publishTopic, Status( StatusMain.UNAVAILABLE ).toJson(), qos = 1, retain = True )
+        self.client.connect( self.mqttParams.address, self.mqttParams.port )
+        self.client.loop_start()
+        #go in infinite loop
+        while( True ):
+            pass
 
+    def __signalHandler( self, signal, frame ):
+        print('Ctrl+C pressed!')
+        self.client.disconnect()
+        self.client.loop_stop()
+        sys.exit(0)        
+
+    def __on_connect( self, client, userdata, flags_dict, result ):
+        """Executed when a connection with the mqtt broker has been established
+        """
+        #debug:
+        m = "Connected flags"+str(flags_dict)+"result code " + str(result)+"client1_id  "+str(client)
+        print( m )
+
+        #subscribe to start listening for incomming commands
+        self.client.subscribe( self.mqttParams.subscribeTopic )
+
+    def __on_message( self, client, userdata, message ):
+        """Executed when an mqtt arrives
+
+        cmd format: 
+            "email": { "from": "sender", "to": "recipient", "subject": "the subject", "body": "the body" }
+            "im": { "to": "jabber id of recipient e.g. user@gmail.com", "message": "the message" }
+            "phonecall": [ phonenumber1, phonenumber2, ..., phonenumberN  ]
+            "sms": { "text": "the message", "phones": [ phonenumber1, phonenumber2, ..., phonenumberN  ] }
+        """
+        text = message.payload.decode( "utf-8" )
+        print( 'Received message "{}"'.format( text ) )
+        if( mqtt.topic_matches_sub( self.mqttParams.subscribeTopic, message.topic ) ):            
+            try:
+                cmds = json.loads( text )
+            except ValueError, e:
+                print( '"{}" is not a valid json text, exiting.'.format( text ) )
+                return
+            gsmCmds = []
+            wiCmds = []
+            if( 'email' in cmds ):
+                #note: Email.To param must be a list of recipients (even if it contains only one element )
+                if( not self.wi.email( EMail( cmds[ 'email' ][ 'from' ], cmds[ 'email' ][ 'to' ], cmds[ 'email' ][ 'subject' ], cmds[ 'email' ][ 'body' ] ) ) ):
+                    gsmCmds[ 'email' ] = cmds[ 'email' ]
+            if( 'im' in cmds ):
+                if( not self.wi.im( InstantMessage( cmds[ 'im' ][ 'to' ], cmds[ 'im' ][ 'message' ] ) ) ):
+                    gsmCmds[ 'im' ] = cmds[ 'im' ]
+            if( 'phonecall' in cmds ):
+                gsmCmds[ 'phonecall' ] = cmds[ 'phonecall' ]
+
+            self.gsm.execute( cmds )
 
 if( __name__ == '__main__' ):
     configurationFile = 'notifier.conf'
@@ -82,3 +99,10 @@ if( __name__ == '__main__' ):
         configuration = json.load( json_file )
         print( 'Configuration: ' )
         pprint( configuration )
+
+        notifier = Notifier( 
+            configuration['mqttId'],
+            MqttParams( configuration['mqttParams']['address'], int( configuration['mqttParams']['port'] ), configuration['mqttParams']['subscribeTopic'], configuration['mqttParams']['publishTopic'] ),
+            MailParams( configuration['mailParams']['user'], configuration['mailParams']['password'], configuration['mailParams']['server']['url'], configuration['mailParams']['server']['port'] ), 
+            InstantMessageParams( configuration['instantMessageParams']['user'], configuration['instantMessageParams']['password'] )
+        )
