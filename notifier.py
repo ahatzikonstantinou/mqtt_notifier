@@ -63,7 +63,7 @@ class Notifier( object ):
 
         cmd format: 
             "email": { "from": "sender", "to": "recipient", "subject": "the subject", "body": "the body" }
-            "im": { "to": "jabber id of recipient e.g. user@gmail.com", "message": "the message" }
+            "im": { "recipients": [ "jabber id of each recipient e.g. user@gmail.com" ], "message": "the message" }
             "phonecall": [ phonenumber1, phonenumber2, ..., phonenumberN  ]
             "sms": { "text": "the message", "phones": [ phonenumber1, phonenumber2, ..., phonenumberN  ] }
         """

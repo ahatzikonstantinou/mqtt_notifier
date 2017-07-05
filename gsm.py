@@ -1,5 +1,10 @@
 from aux import *
 
+class SMS( object ):
+    def __init__( self, phones, text ):
+        self.text = text
+        self.phones = phones
+
 class GSM( object ):
     """ This class handles notifications that will be sent through the GSM interface
     """
