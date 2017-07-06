@@ -12,6 +12,6 @@ class GSM( object ):
         self.mailParams = mailParams
         self.imParams = imParams
         
-    def execute( self, comands ):
+    def execute( self, commands ):
         """ Acceptable commands are email, im, sms, phonecall """
         pass #TODO

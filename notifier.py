@@ -79,13 +79,19 @@ class Notifier( object ):
             wiCmds = []
             if( 'email' in cmds ):
                 #note: Email.To param must be a list of recipients (even if it contains only one element )
-                if( not self.wi.email( EMail( cmds[ 'email' ][ 'from' ], cmds[ 'email' ][ 'to' ], cmds[ 'email' ][ 'subject' ], cmds[ 'email' ][ 'body' ] ) ) ):
-                    gsmCmds[ 'email' ] = cmds[ 'email' ]
+                wiCmds[ 'email' ] = EMail( cmds[ 'email' ][ 'from' ], cmds[ 'email' ][ 'to' ], cmds[ 'email' ][ 'subject' ], cmds[ 'email' ][ 'body' ] )
             if( 'im' in cmds ):
-                if( not self.wi.im( InstantMessage( cmds[ 'im' ][ 'to' ], cmds[ 'im' ][ 'message' ] ) ) ):
-                    gsmCmds[ 'im' ] = cmds[ 'im' ]
+                wiCmds[ 'im' ] = InstantMessage( cmds[ 'im' ][ 'to' ], cmds[ 'im' ][ 'message' ] )
+
+            #if wi is not available and cannot execute the commands, have gsm execute them
+            if( not self.wi.execute( wiCmds ) ):
+                gsmCmds.update( wiCmds );
+
             if( 'phonecall' in cmds ):
                 gsmCmds[ 'phonecall' ] = cmds[ 'phonecall' ]
+
+            if( 'sms' in cmds ):
+                gsmCmds[ 'sms' ] = SMS( cmds[ 'sms' ][ 'text' ], cmds[ 'sms' ][ 'phones' ] )
 
             self.gsm.execute( cmds )
 

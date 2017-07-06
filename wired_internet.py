@@ -31,10 +31,6 @@ class WiredInternet( object ):
         return re.match( validIpAddressRegex, ip ) is not None
 
     def email( self, mail ):
-        if( not self.isAvailable() ):
-            return False
-
-        
         msg = MIMEMultipart()
         msg['Subject'] = mail.subject
         msg['From'] = mail.From
@@ -47,6 +43,7 @@ class WiredInternet( object ):
         server.login( self.mailParams.username, self.mailParams.password )
         server.sendmail( mail.From, mail.To, msg.as_string() )
         server.quit()
+        return True
 
     def im( self, iMessage ):
         jid = xmpp.protocol.JID( self.imParams.jid )
@@ -54,12 +51,12 @@ class WiredInternet( object ):
         con = cl.connect()
         if not con:
             print 'could not connect!'
-            sys.exit()
+            return False
         print 'connected with', con
         auth = cl.auth( jid.getNode(), self.imParams.password,resource = jid.getResource() )
         if not auth:
             print 'could not authenticate!'
-            sys.exit()
+            return False
         print 'authenticated using', auth
 
         #cl.SendInitPresence(requestRoster=0)   # you may need to uncomment this for old server
@@ -70,6 +67,21 @@ class WiredInternet( object ):
         time.sleep(1)   # some older servers will not send the message if you disconnect immediately after sending
 
         cl.disconnect()
+        return True
+
+    def execute( self, commands ):
+        if( not self.isAvailable() ):
+            return False
+        for k, v in commands.iteritems():
+            try:
+                if( 'email' == k ):
+                    self.email( v )
+                elif( 'im' == k ):
+                    if( not self.im( v ) ):
+                        return False
+            except:
+                return False
+        return True
 
 if __name__ == "__main__":
     wi = WiredInternet( MailParams( 'ahatzikonstantinou@gmail.com', '645kk\\45', 'smtp.gmail.com', 587 ), InstantMessageParams( 'ahatziko.mainpc@gmail.com', '312ggp12' ) )
