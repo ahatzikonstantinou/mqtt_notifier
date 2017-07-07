@@ -4,6 +4,7 @@ import signal   #to detect CTRL C
 import sys
 
 import json #to generate payloads for mqtt publishing
+import jsonpickle #json.dumps crashes for InstantMessage. jsonpickle works fine
 import os.path # to check if configuration file exists
 
 from gsm import *
@@ -35,7 +36,7 @@ class Notifier( object ):
         self.client.on_connect = self.__on_connect
         self.client.on_message = self.__on_message
         #set last will and testament before connecting
-        self.client.will_set( self.mqttParams.publishTopic, Status( StatusMain.UNAVAILABLE ).toJson(), qos = 1, retain = True )
+        self.client.will_set( self.mqttParams.publishTopic, json.dumps({ 'main': 'UNAVAILABLE' }), qos = 1, retain = True )
         self.client.connect( self.mqttParams.address, self.mqttParams.port )
         self.client.loop_start()
         #go in infinite loop
@@ -55,6 +56,9 @@ class Notifier( object ):
         m = "Connected flags"+str(flags_dict)+"result code " + str(result)+"client1_id  "+str(client)
         print( m )
 
+        # tell other devices that the notifier is available
+        self.client.will_set( self.mqttParams.publishTopic, json.dumps({ 'main': 'AVAILABLE' }), qos = 1, retain = True )
+        
         #subscribe to start listening for incomming commands
         self.client.subscribe( self.mqttParams.subscribeTopic )
 
@@ -68,7 +72,7 @@ class Notifier( object ):
             "sms": { "text": "the message", "phones": [ phonenumber1, phonenumber2, ..., phonenumberN  ] }
         """
         text = message.payload.decode( "utf-8" )
-        print( 'Received message "{}"'.format( text ) )
+        print( 'Received message "{}"'.format( text ).encode( 'utf-8' ) )
         if( mqtt.topic_matches_sub( self.mqttParams.subscribeTopic, message.topic ) ):            
             try:
                 cmds = json.loads( text )
@@ -77,20 +81,22 @@ class Notifier( object ):
                 return
             gsmCmds = []
             wiCmds = []
-            if( 'email' in cmds ):
+            if( 'email' in cmds and cmds[ 'email' ] is not None ):
                 #note: Email.To param must be a list of recipients (even if it contains only one element )
-                wiCmds[ 'email' ] = EMail( cmds[ 'email' ][ 'from' ], cmds[ 'email' ][ 'to' ], cmds[ 'email' ][ 'subject' ], cmds[ 'email' ][ 'body' ] )
-            if( 'im' in cmds ):
-                wiCmds[ 'im' ] = InstantMessage( cmds[ 'im' ][ 'to' ], cmds[ 'im' ][ 'message' ] )
+                wiCmds[ 'email' ] = EMail( cmds[ 'email' ][ 'From' ], cmds[ 'email' ][ 'To' ], cmds[ 'email' ][ 'subject' ], cmds[ 'email' ][ 'body' ] )
+            if( 'im' in cmds and cmds[ 'im' ] is not None ):
+                # wiCmds[ 'im' ] = InstantMessage( cmds[ 'im' ][ 'recipients' ], cmds[ 'im' ][ 'message' ] )
+                wiCmds[ 'im ' ] = jsonpickle.decode( json.dumps( cmds[ 'im' ] ) )
+                TODO
 
             #if wi is not available and cannot execute the commands, have gsm execute them
             if( not self.wi.execute( wiCmds ) ):
                 gsmCmds.update( wiCmds );
 
-            if( 'phonecall' in cmds ):
+            if( 'phonecall' in cmds  and cmds[ 'phonecall' ] is not None ):
                 gsmCmds[ 'phonecall' ] = cmds[ 'phonecall' ]
 
-            if( 'sms' in cmds ):
+            if( 'sms' in cmds and cmds[ 'sms' ] is not None ):
                 gsmCmds[ 'sms' ] = SMS( cmds[ 'sms' ][ 'text' ], cmds[ 'sms' ][ 'phones' ] )
 
             self.gsm.execute( cmds )
@@ -103,8 +109,8 @@ if( __name__ == '__main__' ):
 
     with open( configurationFile ) as json_file:
         configuration = json.load( json_file )
-        print( 'Configuration: ' )
-        pprint( configuration )
+        print( 'Configuration: \n{}'.format( json.dumps( configuration, indent = 2  ) ) )
+        
 
         notifier = Notifier( 
             configuration['mqttId'],
@@ -112,3 +118,5 @@ if( __name__ == '__main__' ):
             MailParams( configuration['mailParams']['user'], configuration['mailParams']['password'], configuration['mailParams']['server']['url'], configuration['mailParams']['server']['port'] ), 
             InstantMessageParams( configuration['instantMessageParams']['user'], configuration['instantMessageParams']['password'] )
         )
+
+        notifier.run()
